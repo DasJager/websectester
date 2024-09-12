@@ -6,7 +6,7 @@ This is a web application that allows users to run security tests on websites. I
 This tool is for educational and testing purposes only. Always obtain proper authorization before testing the security of a website you do not own or have explicit permission to test. I am not responsible for any damages resulting in the use of this tool.
 
 ## Disclaimer
-
+![Button Clicked](https://github.com/DasJager/websectester/blob/main/sectester.gif)
 ## Features
 
 - XSS protection check
