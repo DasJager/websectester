@@ -1,1 +1,5 @@
-
+Flask
+requests
+beautifulsoup4
+selenium
+urllib3
