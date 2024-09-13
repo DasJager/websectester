@@ -13,6 +13,7 @@ This tool is for educational and testing purposes only. Always obtain proper aut
 - HTTPS implementation check
 - Security headers check
 - CSRF protection check
+- Cors validation check
 - Input validation check
 - Error handling check
 - Access control check
