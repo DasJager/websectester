@@ -64,7 +64,7 @@ websectester/
    - Download the appropriate version of ChromeDriver for your operating system from the [official ChromeDriver website](https://sites.google.com/a/chromium.org/chromedriver/downloads).
    - Extract the executable and add it to your system's PATH.
 
-5. Or simply instal google chrome...
+5. Or simply install google chrome...
 
 ## Usage
 
