@@ -89,7 +89,8 @@ def run_security_tests(url):
         results['csrf_protection'] = check_csrf_protection(driver, url)
         results['auth_session'] = check_auth_session(driver, url)
         results['access_control'] = check_access_control(driver, url)
-        results['error_handling'] = check_error_handling(driver, url)
+        results['cors'] = check_cors(url)
+
 
         # Existing automated checks
         results['xss_protection'] = check_xss_protection(url)
@@ -120,6 +121,66 @@ def retry(func, retries=3, delay=2):
             logging.warning(f"Retry failed: {str(e)}")
             time.sleep(delay)
     raise Exception("Maximum retries reached")
+
+# Check Cors 
+def check_cors(url):
+    try:
+        response = requests_retry_session().options(url, timeout=5)  # Timeout to avoid long delays
+        cors_headers = {
+            'Access-Control-Allow-Origin': response.headers.get('Access-Control-Allow-Origin'),
+            'Access-Control-Allow-Methods': response.headers.get('Access-Control-Allow-Methods'),
+            'Access-Control-Allow-Headers': response.headers.get('Access-Control-Allow-Headers'),
+            'Access-Control-Allow-Credentials': response.headers.get('Access-Control-Allow-Credentials')
+        }
+
+        details = []
+        if cors_headers['Access-Control-Allow-Origin'] == '*':
+            status = 'Poor'
+            details.append('CORS policy allows all origins, which is insecure.')
+        elif cors_headers['Access-Control-Allow-Origin']:
+            status = 'Good'
+            details.append(f'CORS policy restricts access to {cors_headers["Access-Control-Allow-Origin"]}.')
+        else:
+            status = 'Missing'
+            details.append('No Access-Control-Allow-Origin header detected.')
+
+        # Check for allowed methods
+        if cors_headers['Access-Control-Allow-Methods']:
+            details.append(f'Allowed methods: {cors_headers["Access-Control-Allow-Methods"]}')
+        else:
+            details.append('No Access-Control-Allow-Methods header detected.')
+
+        # Check for allowed headers
+        if cors_headers['Access-Control-Allow-Headers']:
+            details.append(f'Allowed headers: {cors_headers["Access-Control-Allow-Headers"]}')
+        else:
+            details.append('No Access-Control-Allow-Headers header detected.')
+
+        # Check if credentials are allowed
+        if cors_headers['Access-Control-Allow-Credentials'] == 'true':
+            details.append('Credentials are allowed for CORS requests.')
+        elif cors_headers['Access-Control-Allow-Credentials'] == 'false':
+            details.append('Credentials are not allowed for CORS requests.')
+        else:
+            details.append('No Access-Control-Allow-Credentials header detected.')
+
+        return {
+            'description': 'Checks for Cors implementation.',
+            'status': status,
+            'details': ' '.join(details),
+            'cors_headers': cors_headers  # Include all checked headers in the response for further analysis
+        }
+    except requests.Timeout:
+        logging.error(f"Timeout during CORS check for {url}")
+        return {'status': 'Error', 'details': 'Request timed out during CORS check.'}
+    except requests.ConnectionError:
+        logging.error(f"Connection error during CORS check for {url}")
+        return {'status': 'Error', 'details': 'Connection error occurred during CORS check.'}
+    except requests.RequestException as e:
+        logging.error(f"Error during CORS check: {str(e)}")
+        return {'status': 'Error', 'details': f'Error occurred during CORS check: {str(e)}'}
+
+
 
 # Test function for CSRF protection
 def check_csrf_protection(driver, url):
