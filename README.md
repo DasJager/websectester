@@ -36,23 +36,15 @@ Before you begin, ensure you have met the following requirements:
    git clone https://github.com/DasJager/websectester.git
    cd websectester
    ```
-1.2 create templates dir:
-   ```
-websectester/
-│
-├── secure/                  # Virtual environment (if you created one)
-├── templates/
-│   └── index.html         # HTML template for the web interface
-├── app.py                 # Main Flask application
-├── requirements.txt       # List of Python dependencies
-└── README.md              # This file
-
-   ```
 
 2. Create a virtual environment (optional but recommended):
    ```
    python -m venv secure
-   `secure\Scripts\activate`
+   secure\Scripts\activate
+   ```
+2.1 Activate the virtual environment:
+   ```
+   secure\Scripts\activate
    ```
 
 3. Install the required dependencies:
