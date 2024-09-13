@@ -40,7 +40,6 @@ Before you begin, ensure you have met the following requirements:
 2. Create a virtual environment (optional but recommended):
    ```
    python -m venv secure
-   secure\Scripts\activate
    ```
 2.1 Activate the virtual environment:
    ```
