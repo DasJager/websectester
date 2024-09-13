@@ -3,3 +3,4 @@ requests
 beautifulsoup4
 selenium
 urllib3
+webdriver-manager
