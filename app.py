@@ -15,6 +15,12 @@ from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+import base64
+import binascii
+import json
+import ssl
+import socket
+from datetime import datetime, timezone
 # Initialize Flask app
 app = Flask(__name__)
 
@@ -84,13 +90,15 @@ def run_security_tests(url):
     try:
         driver = setup_headless_browser()
 
-        # Convert manual checks to automated
+        # Automated security checks
         results['input_validation'] = check_input_validation(driver, url)
         results['csrf_protection'] = check_csrf_protection(driver, url)
         results['auth_session'] = check_auth_session(driver, url)
         results['access_control'] = check_access_control(driver, url)
         results['cors'] = check_cors(url)
-
+        
+        # SSL/TLS Configuration Check
+        results['ssl_tls'] = check_ssl_tls(url)
 
         # Existing automated checks
         results['xss_protection'] = check_xss_protection(url)
@@ -112,6 +120,7 @@ def run_security_tests(url):
 
     return results
 
+
 # Retry mechanism to improve reliability
 def retry(func, retries=3, delay=2):
     for _ in range(retries):
@@ -121,6 +130,100 @@ def retry(func, retries=3, delay=2):
             logging.warning(f"Retry failed: {str(e)}")
             time.sleep(delay)
     raise Exception("Maximum retries reached")
+
+#SSL TLS Check
+def check_ssl_tls(url):
+    """
+    Checks the SSL/TLS configuration of the website, including certificate validity, expiration, and cipher suites.
+    """
+    logging.info(f"Starting SSL/TLS check for URL: {url}")
+    
+    parsed_url = urlparse(url)
+    hostname = parsed_url.hostname
+    port = 443  # Default port for HTTPS
+
+    try:
+        # Create a context to get SSL information
+        logging.debug(f"Creating SSL context for {hostname}")
+        context = ssl.create_default_context()
+
+        # Connect to the server to retrieve the SSL certificate
+        with socket.create_connection((hostname, port)) as sock:
+            logging.debug(f"Socket connection created to {hostname}:{port}")
+            with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                logging.debug(f"SSL connection established to {hostname}:{port}")
+
+                # Get the certificate from the connection
+                cert = ssock.getpeercert()
+                logging.debug(f"Certificate received: {cert}")
+
+                # Extract certificate details
+                issued_to = cert.get('subject', [])
+                issued_by = cert.get('issuer', [])
+                
+                # Convert 'notBefore' and 'notAfter' to timezone-aware datetimes
+                valid_from = datetime.strptime(cert['notBefore'], '%b %d %H:%M:%S %Y %Z').replace(tzinfo=timezone.utc)
+                valid_until = datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z').replace(tzinfo=timezone.utc)
+
+                logging.info(f"SSL certificate details: Issued to: {issued_to}, Issued by: {issued_by}, "
+                             f"Valid from: {valid_from}, Valid until: {valid_until}")
+
+                # Use timezone-aware current date
+                current_date = datetime.now(timezone.utc)
+                logging.debug(f"Current UTC time: {current_date}")
+
+                # Check if the certificate has expired
+                if valid_until < current_date:
+                    status = 'Poor'
+                    details = f"SSL certificate expired on {valid_until}."
+                    logging.warning(f"SSL certificate expired for {hostname}. Expired on {valid_until}.")
+                else:
+                    status = 'Good'
+                    details = f"SSL certificate is valid until {valid_until}."
+                    logging.info(f"SSL certificate is valid until {valid_until} for {hostname}")
+
+                # SSL Cipher Suite analysis (Checking for weak ciphers)
+                cipher = ssock.cipher()
+                logging.debug(f"SSL cipher in use: {cipher}")
+                weak_ciphers = ['DES', '3DES', 'RC4', 'MD5', 'NULL', 'EXP', 'aNULL', 'eNULL']
+                if any(weak in cipher[0] for weak in weak_ciphers):
+                    status = 'Poor'
+                    details += f" Weak cipher suite detected: {cipher[0]}."
+                    logging.warning(f"Weak cipher suite detected: {cipher[0]} for {hostname}")
+
+                return {
+                    'description': 'Checks the SSL/TLS configuration of the website.',
+                    'status': status,
+                    'details': f"Issued to: {issued_to}, Issued by: {issued_by}, Valid from: {valid_from}, {details}. Cipher: {cipher[0]}",
+                    'certificate': {
+                        'issued_to': issued_to,
+                        'issued_by': issued_by,
+                        'valid_from': valid_from,
+                        'valid_until': valid_until,
+                        'cipher': cipher[0]
+                    }
+                }
+    except ssl.SSLError as e:
+        logging.error(f"SSL Error occurred for {hostname}: {str(e)}")
+        return {
+            'description': 'Checks the SSL/TLS configuration of the website.',
+            'status': 'Error',
+            'details': f'SSL Error occurred: {str(e)}'
+        }
+    except socket.error as e:
+        logging.error(f"Socket error occurred while connecting to {hostname}:{port}: {str(e)}")
+        return {
+            'description': 'Checks the SSL/TLS configuration of the website.',
+            'status': 'Error',
+            'details': f'Socket error occurred: {str(e)}'
+        }
+    except Exception as e:
+        logging.error(f"General error occurred during SSL/TLS check for {hostname}: {str(e)}")
+        return {
+            'description': 'Checks the SSL/TLS configuration of the website.',
+            'status': 'Error',
+            'details': f'Error occurred during SSL/TLS check: {str(e)}'
+        }
 
 # Check Cors 
 def check_cors(url):
@@ -201,18 +304,23 @@ def check_csrf_protection(driver, url):
             'token_in_session': False,
             'token_in_js': False,
             'token_in_meta': False,
-            'samesite_cookie': False
+            'samesite_cookie': False,
+            'token_strength': 'Unknown'
         }
 
         # Check for CSRF token in JavaScript
         js_content = driver.execute_script("return document.documentElement.outerHTML;")
-        if re.search(r"let\s+csrfToken\s*=\s*'[a-f0-9]{64}'", js_content):
+        token_in_js = re.search(r"let\s+csrfToken\s*=\s*'[a-f0-9]{64}'", js_content)
+        if token_in_js:
             csrf_protections['token_in_js'] = True
+            csrf_protections['token_strength'] = validate_token_strength(token_in_js.group(0))
 
         # Check for CSRF meta tags
         meta_csrf = driver.find_elements(By.CSS_SELECTOR, "meta[name='csrf-token']")
         if meta_csrf:
+            csrf_token_value = meta_csrf[0].get_attribute("content")
             csrf_protections['token_in_meta'] = True
+            csrf_protections['token_strength'] = validate_token_strength(csrf_token_value)
 
         # Check for SameSite cookie attribute
         cookies = driver.get_cookies()
@@ -220,10 +328,6 @@ def check_csrf_protection(driver, url):
             if cookie.get('sameSite') in ['Strict', 'Lax']:
                 csrf_protections['samesite_cookie'] = True
                 break
-
-        # Check PHP session for CSRF token (indirect check)
-        if re.search(r"\$_SESSION\['csrf_token'\]\s*=\s*bin2hex\(random_bytes\(32\)\);", js_content):
-            csrf_protections['token_in_session'] = True
 
         # Determine the overall CSRF protection status
         if csrf_protections['token_in_session'] or csrf_protections['token_in_js']:
@@ -242,7 +346,7 @@ def check_csrf_protection(driver, url):
         details += ' Protections found: ' + ', '.join([k for k, v in csrf_protections.items() if v])
 
         return {
-            'description': 'Checks for CSRF token implementation.',
+            'description': 'Checks for CSRF token implementation and strength.',
             'status': status,
             'details': details,
             'protections': csrf_protections
@@ -254,6 +358,88 @@ def check_csrf_protection(driver, url):
             'status': 'Error',
             'details': f'Error occurred while checking: {str(e)}'
         }
+
+
+# Helper function to validate CSRF token strength
+def validate_token_strength(token):
+    """
+    Validate the strength of a CSRF token based on its encoding scheme and size.
+    Supports base64, hex, base32, and JWT token formats.
+    """
+    try:
+        # Detect if the token is a JWT (JSON Web Token)
+        if is_jwt_token(token):
+            return validate_jwt_strength(token)
+
+        # Try Base64 decoding
+        try:
+            decoded_token = base64.b64decode(token, validate=True)
+            if len(decoded_token) >= 16:
+                return 'Strong'
+        except (binascii.Error, ValueError):
+            pass  # Not a valid Base64-encoded token
+
+        # Try Base32 decoding
+        try:
+            decoded_token = base64.b32decode(token, casefold=True)
+            if len(decoded_token) >= 16:
+                return 'Strong'
+        except (binascii.Error, ValueError):
+            pass  # Not a valid Base32-encoded token
+
+        # Try Hex decoding
+        try:
+            decoded_token = binascii.unhexlify(token)
+            if len(decoded_token) >= 16:
+                return 'Strong'
+        except (binascii.Error, ValueError):
+            pass  # Not a valid Hex-encoded token
+
+        # If the token is plain text, check its length directly
+        if len(token) >= 32:  # Minimum of 128 bits (16 bytes) in plain text
+            return 'Strong'
+
+        # If none of the encodings were valid or token is too short
+        return 'Weak'
+    except Exception as e:
+        logging.warning(f"Error during CSRF token validation: {str(e)}")
+        return 'Unknown'
+
+def is_jwt_token(token):
+    """
+    Detect if a token is in JWT (JSON Web Token) format.
+    JWTs typically consist of three Base64-encoded parts separated by dots.
+    """
+    return re.match(r'^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$', token) is not None
+
+def validate_jwt_strength(token):
+    """
+    Validate the strength of a JWT (JSON Web Token).
+    Check if the JWT has sufficient length in its header, payload, and signature parts.
+    """
+    try:
+        # Split JWT into its three parts: header, payload, and signature
+        header, payload, signature = token.split('.')
+        
+        # Decode the header and payload (they are base64url encoded)
+        header_decoded = base64.urlsafe_b64decode(pad_base64(header)).decode('utf-8')
+        payload_decoded = base64.urlsafe_b64decode(pad_base64(payload)).decode('utf-8')
+
+        # Check if the decoded payload contains sufficient entropy or length
+        # JWT signatures are usually strong, so we only need to check the length
+        if len(signature) >= 32:  # Roughly 128-bit strength or higher
+            return 'Strong'
+        else:
+            return 'Weak'
+    except Exception as e:
+        logging.warning(f"Error during JWT token validation: {str(e)}")
+        return 'Unknown'
+
+def pad_base64(b64_string):
+    """
+    Pad Base64 strings with "=" to make them valid for decoding if necessary.
+    """
+    return b64_string + '=' * (4 - len(b64_string) % 4)
 
 
 # Test function for input validation
