@@ -8,54 +8,63 @@
     <style>
         body {
             font-family: 'Roboto', sans-serif;
-            background-color: #f0f2f5;
+            background-color: #0a0e17;
+            color: #7fe5f0;
             margin: 0;
             padding: 0;
-            min-height: 100vh; /* Allow the body to expand */
+            min-height: 100vh;
             display: flex;
             justify-content: center;
+            align-items: center;
         }
 
         .container {
-            background: white;
+            background: #13171f;
             padding: 40px;
             border-radius: 8px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-            max-width: 600px;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+            max-width: 800px;
             width: 100%;
-            margin-top: 40px; /* Add some margin to ensure it's centered when there is not much content */
         }
 
         h1 {
-            margin-bottom: 20px;
-            color: #333;
-            font-weight: 500;
-            font-size: 28px;
+            font-family: 'Share Tech Mono', monospace;
+            color: #00ff00;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 36px;
+            text-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
         }
 
         input[type="text"] {
-            width: 100%;
+            width: 95%;
             padding: 12px 20px;
             margin-bottom: 20px;
-            border: 1px solid #ddd;
+            border: none;
             border-radius: 4px;
             font-size: 16px;
+            background-color: #1c2130;
+            color: #7fe5f0;
+            font-family: 'Share Tech Mono', monospace;
         }
 
         button {
-            background-color: #007bff;
-            color: white;
+            background-color: #00ff00;
+            color: #0a0e17;
             padding: 12px 20px;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 16px;
             width: 100%;
-            transition: background-color 0.3s ease;
+            transition: all 0.3s ease;
+            font-family: 'Share Tech Mono', monospace;
+            font-weight: bold;
         }
 
         button:hover {
-            background-color: #0056b3;
+            background-color: #00cc00;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
         }
 
         #results {
@@ -68,19 +77,30 @@
             margin-bottom: 20px;
             padding: 15px;
             border-radius: 5px;
-            border: 1px solid #ddd;
-            background-color: #f9f9f9;
+            border: 1px solid #2a2f3a;
+            background-color: #1c2130;
         }
 
         .result-item h3 {
             margin: 0 0 10px;
             font-size: 18px;
-            color: #333;
+            color: #00ff00;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .result-item ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+
+        .result-item ul li {
+            margin-bottom: 5px;
+            font-family: 'Share Tech Mono', monospace;
         }
 
         .result-item p {
             margin: 5px 0;
-            color: #555;
+            color: #7fe5f0;
         }
 
         .status {
@@ -88,29 +108,28 @@
         }
 
         .status-good {
-            color: #28a745;
+            color: #00ff00;
         }
 
         .status-fair {
-            color: #ffc107;
+            color: #ffff00;
         }
 
         .status-poor {
-            color: #dc3545;
+            color: #ff3300;
         }
 
         .status-error {
-            color: #6c757d;
+            color: #ff00ff;
         }
 
-        /* Add spinner for loading state */
         .loader {
-            border: 4px solid #f3f3f3;
+            border: 4px solid #1c2130;
             border-radius: 50%;
-            border-top: 4px solid #007bff;
+            border-top: 4px solid #00ff00;
             width: 40px;
             height: 40px;
-            animation: spin 2s linear infinite;
+            animation: spin 1s linear infinite;
             margin: 20px auto;
         }
 
@@ -118,9 +137,21 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* Matrix rain animation */
+        #matrix-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            opacity: 0.1;
+        }
     </style>
 </head>
 <body>
+    <canvas id="matrix-bg"></canvas>
     <div class="container">
         <h1>Website Security Tester</h1>
         <input type="text" id="urlInput" placeholder="Enter URL or IP address">
@@ -178,45 +209,124 @@
         }
         
         function displayResults(results) {
-            const resultsDiv = document.getElementById('results');
-            let html = '<h2>Test Results</h2>';
+    const resultsDiv = document.getElementById('results');
+    let html = '<h2>Test Results</h2>';
 
-            for (const [test, result] of Object.entries(results)) {
-                let statusClass = '';
+    for (const [test, result] of Object.entries(results)) {
+        let statusClass = '';
 
-                if (result.status && typeof result.status === 'string') {
-                    if (result.status.toLowerCase() === 'good') statusClass = 'status-good';
-                    else if (result.status.toLowerCase() === 'fair') statusClass = 'status-fair';
-                    else if (result.status.toLowerCase() === 'poor') statusClass = 'status-poor';
-                    else statusClass = 'status-error';
-                } else {
-                    statusClass = 'status-error';
-                }
-
-                html += `
-                    <div class="result-item">
-                        <h3>${test}</h3>
-                        <p>${result.description || 'No description available'}</p>
-                        <p class="status ${statusClass}">Status: ${result.status || 'Unknown'}</p>
-                `;
-
-                if (result.details) {
-                    if (Array.isArray(result.details)) {
-                        html += '<ul>';
-                        result.details.forEach(detail => {
-                            html += `<li>Path: ${detail.path}, Status: ${detail.status}, Details: ${detail.details}</li>`;
-                        });
-                        html += '</ul>';
-                    } else {
-                        html += `<p>Details: ${result.details}</p>`;
-                    }
-                }
-
-                html += '</div>';
-            }
-
-            resultsDiv.innerHTML = html;
+        // Determine the status class based on the result's status
+        if (result.status && typeof result.status === 'string') {
+            if (result.status.toLowerCase() === 'good') statusClass = 'status-good';
+            else if (result.status.toLowerCase() === 'fair') statusClass = 'status-fair';
+            else if (result.status.toLowerCase() === 'poor') statusClass = 'status-poor';
+            else statusClass = 'status-error';
+        } else {
+            statusClass = 'status-error';
         }
+
+        // Add result title and status
+        html += `
+            <div class="result-item">
+                <h3>${test.replace('_', ' ').toUpperCase()}</h3>
+                <p>${result.description || 'No description available'}</p>
+                <p class="status ${statusClass}">Status: ${result.status || 'Unknown'}</p>
+        `;
+
+        // If the result has details, display them as a list in key-value format
+        if (result.details) {
+            html += '<ul>';
+            if (Array.isArray(result.details)) {
+                // Iterate through array details (e.g., for access control paths)
+                result.details.forEach(detail => {
+                    html += `<li><strong>Path:</strong> ${detail.path}, <strong>Status:</strong> ${detail.status}, <strong>Details:</strong> ${detail.details}</li>`;
+                });
+            } else if (typeof result.details === 'object') {
+                // Handle objects like security headers or CSRF protections
+                Object.keys(result.details).forEach(key => {
+                    html += `<li><strong>${capitalizeFirstLetter(key.replace(/_/g, ' '))}:</strong> ${result.details[key]}</li>`;
+                });
+            } else {
+                // Handle simple string details
+                html += `<li><strong>Details:</strong> ${result.details}</li>`;
+            }
+            html += '</ul>';
+        }
+
+        // Specific handling for SSL/TLS certificates (structured format)
+        if (test === 'ssl_tls' && result.certificate) {
+            const { issued_to, issued_by, valid_from, valid_until, cipher } = result.certificate;
+            html += `
+                <ul>
+                    <li><strong>Issued to:</strong> ${issued_to.map(formatCertificateEntry).join(', ')}</li>
+                    <li><strong>Issued by:</strong> ${issued_by.map(formatCertificateEntry).join(', ')}</li>
+                    <li><strong>Valid from:</strong> ${new Date(valid_from).toLocaleString()}</li>
+                    <li><strong>Valid until:</strong> ${new Date(valid_until).toLocaleString()}</li>
+                    <li><strong>Cipher Suite:</strong> ${cipher}</li>
+                </ul>
+            `;
+        }
+
+        // Handle CSRF protection token strength, if available (structured format)
+        if (result.protections && result.protections.token_strength) {
+            html += `<li><strong>CSRF Token Strength:</strong> ${result.protections.token_strength}</li>`;
+        }
+
+        html += '</div>';
+    }
+
+    resultsDiv.innerHTML = html;
+}
+
+// Helper function to format certificate details for SSL/TLS
+function formatCertificateEntry(entry) {
+    if (Array.isArray(entry)) {
+        return entry.map(e => e.join(': ')).join(', ');
+    }
+    return entry;
+}
+
+// Helper function to capitalize the first letter of any string
+function capitalizeFirstLetter(string) {
+    return string.charAt(0).toUpperCase() + string.slice(1);
+}
+const canvas = document.getElementById('matrix-bg');
+        const ctx = canvas.getContext('2d');
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const matrix = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%";
+        const matrixArray = matrix.split("");
+
+        const fontSize = 10;
+        const columns = canvas.width / fontSize;
+
+        const drops = [];
+        for (let x = 0; x < columns; x++) {
+            drops[x] = 1;
+        }
+
+        function drawMatrix() {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.04)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = "#0F0";
+            ctx.font = fontSize + "px monospace";
+
+            for (let i = 0; i < drops.length; i++) {
+                const text = matrixArray[Math.floor(Math.random() * matrixArray.length)];
+                ctx.fillText(text, i * fontSize, drops[i] * fontSize);
+
+                if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+                drops[i]++;
+            }
+        }
+
+        setInterval(drawMatrix, 35);
+
     </script>
 </body>
 </html>
