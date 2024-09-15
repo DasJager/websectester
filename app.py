@@ -21,6 +21,8 @@ import json
 import ssl
 import socket
 from datetime import datetime, timezone
+from collections import deque
+import threading
 # Initialize Flask app
 app = Flask(__name__)
 
@@ -74,6 +76,52 @@ def check_domain_ownership(url):
     # For now, it assumes all URLs are owned by the user.
     return True
 
+
+# function for web crawling change max_depth=3 if you have more pages to check
+def crawl_website(start_url, max_depth=3, rate_limit=10):
+    visited = set()
+    queue = deque([(start_url, 0)])
+    results = []
+
+    while queue:
+        url, depth = queue.popleft()
+        
+        if url in visited or depth > max_depth:
+            continue
+        
+        visited.add(url)
+        
+        try:
+            logging.info(f"Crawling: {url}")
+            driver = setup_headless_browser()
+            driver.get(url)
+            
+            # Wait for page load or all tests to complete
+            time.sleep(rate_limit)
+            
+            # Run all security tests
+            page_results = run_security_tests(url)
+            
+            results.append({
+                'url': url,
+                'depth': depth,
+                'results': page_results
+            })
+            
+            # Find links on the page
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            for link in soup.find_all('a', href=True):
+                next_url = urljoin(url, link['href'])
+                if next_url.startswith(start_url):  # Only follow links within the same domain
+                    queue.append((next_url, depth + 1))
+            
+            driver.quit()
+            
+        except Exception as e:
+            logging.error(f"Error crawling {url}: {str(e)}")
+    
+    return results
+
 # Function to perform security tests
 def run_security_tests(url):
     results = {}
@@ -88,13 +136,16 @@ def run_security_tests(url):
     logging.info(f"Running security tests on {url}")
 
     try:
+        # Try to set up the headless browser
         driver = setup_headless_browser()
-
-        # Automated security checks
+        logging.info("Headless browser setup successfully.")
+        
+        # Automated security checks only proceed if the browser setup succeeds
         results['input_validation'] = check_input_validation(driver, url)
         results['csrf_protection'] = check_csrf_protection(driver, url)
         results['auth_session'] = check_auth_session(driver, url)
         results['access_control'] = check_access_control(driver, url)
+        results['error_handling'] = check_error_handling(driver, url)
         results['cors'] = check_cors(url)
         
         # SSL/TLS Configuration Check
@@ -105,8 +156,6 @@ def run_security_tests(url):
         results['https'] = check_https(url)
         results['security_headers'] = check_security_headers(url)
 
-        logging.info(f"Security tests completed successfully for {url}")
-
     except Exception as e:
         logging.error(f"Error during security testing: {str(e)}")
         results['error'] = {
@@ -115,10 +164,15 @@ def run_security_tests(url):
             'details': str(e)
         }
     finally:
+        # Always ensure the browser is closed after testing
         if driver:
             driver.quit()
 
+    # Log success only after the security tests have run successfully
+    logging.info(f"Security tests completed successfully for {url}")
+
     return results
+
 
 
 # Retry mechanism to improve reliability
@@ -148,7 +202,7 @@ def check_ssl_tls(url):
         context = ssl.create_default_context()
 
         # Connect to the server to retrieve the SSL certificate
-        with socket.create_connection((hostname, port)) as sock:
+        with socket.create_connection((hostname, port), timeout=10) as sock:
             logging.debug(f"Socket connection created to {hostname}:{port}")
             with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                 logging.debug(f"SSL connection established to {hostname}:{port}")
@@ -228,7 +282,7 @@ def check_ssl_tls(url):
 # Check Cors 
 def check_cors(url):
     try:
-        response = requests_retry_session().options(url, timeout=5)  # Timeout to avoid long delays
+        response = requests_retry_session().options(url, timeout=10)  # Timeout to avoid long delays
         cors_headers = {
             'Access-Control-Allow-Origin': response.headers.get('Access-Control-Allow-Origin'),
             'Access-Control-Allow-Methods': response.headers.get('Access-Control-Allow-Methods'),
@@ -236,52 +290,61 @@ def check_cors(url):
             'Access-Control-Allow-Credentials': response.headers.get('Access-Control-Allow-Credentials')
         }
 
-        details = []
+        details = {
+            'origin_policy': '',
+            'allowed_methods': '',
+            'allowed_headers': '',
+            'credentials_allowed': ''
+        }
+
+        # Check the CORS policy regarding allowed origins
         if cors_headers['Access-Control-Allow-Origin'] == '*':
             status = 'Poor'
-            details.append('CORS policy allows all origins, which is insecure.')
+            details['origin_policy'] = 'CORS policy allows all origins, which is insecure.'
         elif cors_headers['Access-Control-Allow-Origin']:
             status = 'Good'
-            details.append(f'CORS policy restricts access to {cors_headers["Access-Control-Allow-Origin"]}.')
+            details['origin_policy'] = f'CORS policy restricts access to {cors_headers["Access-Control-Allow-Origin"]}.'
         else:
             status = 'Missing'
-            details.append('No Access-Control-Allow-Origin header detected.')
+            details['origin_policy'] = 'No Access-Control-Allow-Origin header detected.'
 
         # Check for allowed methods
         if cors_headers['Access-Control-Allow-Methods']:
-            details.append(f'Allowed methods: {cors_headers["Access-Control-Allow-Methods"]}')
+            details['allowed_methods'] = f'Allowed methods: {cors_headers["Access-Control-Allow-Methods"]}'
         else:
-            details.append('No Access-Control-Allow-Methods header detected.')
+            details['allowed_methods'] = 'No Access-Control-Allow-Methods header detected.'
 
         # Check for allowed headers
         if cors_headers['Access-Control-Allow-Headers']:
-            details.append(f'Allowed headers: {cors_headers["Access-Control-Allow-Headers"]}')
+            details['allowed_headers'] = f'Allowed headers: {cors_headers["Access-Control-Allow-Headers"]}'
         else:
-            details.append('No Access-Control-Allow-Headers header detected.')
+            details['allowed_headers'] = 'No Access-Control-Allow-Headers header detected.'
 
         # Check if credentials are allowed
         if cors_headers['Access-Control-Allow-Credentials'] == 'true':
-            details.append('Credentials are allowed for CORS requests.')
+            details['credentials_allowed'] = 'Credentials are allowed for CORS requests.'
         elif cors_headers['Access-Control-Allow-Credentials'] == 'false':
-            details.append('Credentials are not allowed for CORS requests.')
+            details['credentials_allowed'] = 'Credentials are not allowed for CORS requests.'
         else:
-            details.append('No Access-Control-Allow-Credentials header detected.')
+            details['credentials_allowed'] = 'No Access-Control-Allow-Credentials header detected.'
 
         return {
             'description': 'Checks for Cors implementation.',
             'status': status,
-            'details': ' '.join(details),
+            'details': details,
             'cors_headers': cors_headers  # Include all checked headers in the response for further analysis
         }
+
     except requests.Timeout:
         logging.error(f"Timeout during CORS check for {url}")
-        return {'status': 'Error', 'details': 'Request timed out during CORS check.'}
+        return {'status': 'Error', 'details': {'error': 'Request timed out during CORS check.'}}
     except requests.ConnectionError:
         logging.error(f"Connection error during CORS check for {url}")
-        return {'status': 'Error', 'details': 'Connection error occurred during CORS check.'}
+        return {'status': 'Error', 'details': {'error': 'Connection error occurred during CORS check.'}}
     except requests.RequestException as e:
         logging.error(f"Error during CORS check: {str(e)}")
-        return {'status': 'Error', 'details': f'Error occurred during CORS check: {str(e)}'}
+        return {'status': 'Error', 'details': {'error': f'Error occurred during CORS check: {str(e)}'}}
+
 
 
 
@@ -289,7 +352,7 @@ def check_cors(url):
 def check_csrf_protection(driver, url):
     try:
         driver.get(url)
-        
+
         # Wait for the page to load
         try:
             WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
@@ -329,35 +392,48 @@ def check_csrf_protection(driver, url):
                 csrf_protections['samesite_cookie'] = True
                 break
 
+        # Generate human-readable details for CSRF protections
+        protection_details_list = []
+        if csrf_protections['token_in_js']:
+            protection_details_list.append('CSRF token found in JavaScript.')
+        if csrf_protections['token_in_meta']:
+            protection_details_list.append('CSRF token found in meta tag.')
+        if csrf_protections['samesite_cookie']:
+            protection_details_list.append('SameSite cookie attribute is set.')
+        if not any(csrf_protections.values()):
+            protection_details_list.append('No CSRF protections found.')
+
+        # Join the list of protection details into a readable string
+        protection_details_str = '; '.join(protection_details_list)
+
         # Determine the overall CSRF protection status
-        if csrf_protections['token_in_session'] or csrf_protections['token_in_js']:
+        if csrf_protections['token_in_js'] or csrf_protections['token_in_meta']:
             status = 'Good'
-            details = 'CSRF token found in PHP session and/or JavaScript, providing strong protection.'
-        elif csrf_protections['token_in_meta']:
-            status = 'Good'
-            details = 'CSRF token found in meta tag, providing good protection.'
+            protection_summary = 'CSRF token found, providing good protection.'
         elif csrf_protections['samesite_cookie']:
             status = 'Fair'
-            details = 'No explicit CSRF tokens found, but SameSite cookie attribute is used, providing some protection.'
+            protection_summary = 'SameSite cookie attribute is set, providing some protection.'
         else:
             status = 'Poor'
-            details = 'No CSRF tokens or alternative protections found. The site may be vulnerable to CSRF attacks.'
-
-        details += ' Protections found: ' + ', '.join([k for k, v in csrf_protections.items() if v])
+            protection_summary = 'No CSRF protections found, the site may be vulnerable to CSRF attacks.'
 
         return {
             'description': 'Checks for CSRF token implementation and strength.',
             'status': status,
-            'details': details,
-            'protections': csrf_protections
+            'details': {
+                'protection_summary': protection_summary,
+                'csrf_protections': protection_details_str
+            }
         }
 
     except Exception as e:
         return {
             'description': 'Checks for CSRF token implementation.',
             'status': 'Error',
-            'details': f'Error occurred while checking: {str(e)}'
+            'details': {'error': f'Error occurred while checking: {str(e)}'}
         }
+
+
 
 
 # Helper function to validate CSRF token strength
@@ -447,7 +523,7 @@ def check_input_validation(driver, url):
     try:
         driver.get(url)
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        
+
         test_inputs = [
             ("'", "SQL Injection"),
             ("<script>alert('XSS')</script>", "XSS"),
@@ -457,9 +533,9 @@ def check_input_validation(driver, url):
             ("() { :; }; echo vulnerable", "Shellshock"),
             ("%0ASet-Cookie: sessionid=abcdef123456", "HTTP Header Injection")
         ]
-        
+
         vulnerabilities = []
-        
+
         def is_element_interactable(element):
             try:
                 return element.is_displayed() and element.is_enabled()
@@ -469,25 +545,25 @@ def check_input_validation(driver, url):
         def interact_with_form(form, input_field, test_input):
             try:
                 if not is_element_interactable(input_field):
-                    return False
-                
+                    return None, False
+
                 # Store the current URL
                 original_url = driver.current_url
-                
+
                 # Interact with the form
                 driver.execute_script("arguments[0].scrollIntoView(true);", input_field)
                 time.sleep(0.5)
                 driver.execute_script("arguments[0].value = arguments[1];", input_field, test_input)
                 driver.execute_script("arguments[0].submit();", form)
-                
+
                 # Wait for page load
                 WebDriverWait(driver, 10).until(
                     lambda d: d.execute_script('return document.readyState') == 'complete'
                 )
-                
+
                 # Check if the URL has changed
                 url_changed = driver.current_url != original_url
-                
+
                 return driver.page_source, url_changed
             except Exception as e:
                 logging.warning(f"Error interacting with form: {str(e)}")
@@ -496,30 +572,20 @@ def check_input_validation(driver, url):
         def analyze_response(response, url_changed, test_input, vuln_type):
             if not response:
                 return None
-            
+
             soup = BeautifulSoup(response, 'html.parser')
-            
+
             # Remove script and style elements
             for script in soup(["script", "style"]):
                 script.decompose()
-            
+
             visible_text = soup.get_text().lower()
-            
-            # More specific detection patterns
-            sql_patterns = [
-                r"sql syntax",
-                r"mysql error",
-                r"ora-\d{5}",
-                r"sql server error"
-            ]
-            xss_patterns = [
-                r"<script>alert\('XSS'\)</script>"
-            ]
-            path_traversal_patterns = [
-                r"root:.*:0:0:",
-                r"win.ini"
-            ]
-            
+
+            # Patterns for detecting vulnerabilities
+            sql_patterns = [r"sql syntax", r"mysql error", r"ora-\d{5}", r"sql server error"]
+            xss_patterns = [r"<script>alert\('XSS'\)</script>"]
+            path_traversal_patterns = [r"root:.*:0:0:", r"win.ini"]
+
             if vuln_type == "SQL Injection" and any(re.search(pattern, visible_text) for pattern in sql_patterns):
                 return "High likelihood of SQL Injection vulnerability"
             elif vuln_type == "XSS" and any(re.search(pattern, response) for pattern in xss_patterns):
@@ -530,7 +596,7 @@ def check_input_validation(driver, url):
                 return f"Potential {vuln_type} vulnerability - input reflected in error message"
             elif url_changed and any(keyword in urlparse(driver.current_url).path.lower() for keyword in ["error", "invalid", "failure"]):
                 return f"Potential {vuln_type} vulnerability - redirected to error page"
-            
+
             return None
 
         forms = driver.find_elements(By.TAG_NAME, "form")
@@ -538,20 +604,20 @@ def check_input_validation(driver, url):
             form_action = form.get_attribute('action') or 'No action specified'
             form_method = form.get_attribute('method') or 'GET'
             inputs = form.find_elements(By.TAG_NAME, "input")
-            
+
             for input_index, input_field in enumerate(inputs, 1):
                 if not is_element_interactable(input_field):
                     continue
-                
+
                 input_name = input_field.get_attribute('name') or f'Unnamed input {input_index}'
                 input_type = input_field.get_attribute('type') or 'text'
-                
+
                 if input_type in ['submit', 'button', 'hidden', 'file']:
                     continue
-                
+
                 for test_input, vuln_type in test_inputs:
                     response, url_changed = interact_with_form(form, input_field, test_input)
-                    
+
                     if response:
                         analysis_result = analyze_response(response, url_changed, test_input, vuln_type)
                         if analysis_result:
@@ -565,11 +631,11 @@ def check_input_validation(driver, url):
                                 "input_type": input_type,
                                 "details": analysis_result
                             })
-                    
+
                     # Navigate back to the original page
                     driver.back()
                     WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-                    
+
                     # Re-find the form and input after navigating back
                     forms = driver.find_elements(By.TAG_NAME, "form")
                     if form_index <= len(forms):
@@ -581,33 +647,34 @@ def check_input_validation(driver, url):
                             break
                     else:
                         break
-        
+
+        # Structuring vulnerabilities for better readability and front-end presentation
         if vulnerabilities:
-            details = "Potential vulnerabilities detected (manual verification required):\n"
-            for vuln in vulnerabilities:
-                details += f"- {vuln['type']} potential vulnerability detected:\n"
-                details += f"  Form: #{vuln['form_index']} (Action: {vuln['form_action']}, Method: {vuln['form_method']})\n"
-                details += f"  Input: {vuln['input_name']} (Type: {vuln['input_type']})\n"
-                details += f"  Test Input: {vuln['input']}\n"
-                details += f"  Details: {vuln['details']}\n\n"
-            
             return {
                 'description': 'Checks for proper input validation and sanitization.',
                 'status': 'Potential Issues Found',
-                'details': details
+                'details': {
+                    'vulnerabilities': vulnerabilities,
+                    'summary': f"{len(vulnerabilities)} potential vulnerabilities detected, manual verification required."
+                }
             }
         else:
             return {
                 'description': 'Checks for proper input validation and sanitization.',
                 'status': 'Good',
-                'details': 'No obvious input validation issues detected.'
+                'details': {
+                    'summary': 'No obvious input validation issues detected.'
+                }
             }
     except Exception as e:
         return {
             'description': 'Checks for proper input validation and sanitization.',
             'status': 'Error',
-            'details': f'Error occurred while checking: {str(e)}'
+            'details': {
+                'error': f'Error occurred while checking: {str(e)}'
+            }
         }
+
 
 
 # Test function for error handling
@@ -619,7 +686,7 @@ def check_error_handling(driver, url):
             test_url = urljoin(url, path)
             
             # First, use requests to check the status code
-            response = requests_retry_session().get(test_url, allow_redirects=False)
+            response = requests_retry_session().get(test_url, allow_redirects=False, timeout=10)
             actual_status = response.status_code
             
             # Then use Selenium for content analysis
@@ -859,7 +926,7 @@ def check_auth_session(driver, url):
 # Test function for XSS protection
 def check_xss_protection(url):
     try:
-        response = requests_retry_session().get(url)
+        response = requests_retry_session().get(url, timeout=10)
         headers = response.headers
         csp = headers.get('Content-Security-Policy')
         xss_protection = headers.get('X-XSS-Protection')
@@ -869,7 +936,7 @@ def check_xss_protection(url):
 
         # Check for reflected XSS
         xss_payload = "<script>alert('XSS')</script>"
-        xss_response = requests_retry_session().get(url, params={"q": xss_payload})
+        xss_response = requests_retry_session().get(url, params={"q": xss_payload}, timeout=10)
         reflected_xss = xss_payload in xss_response.text
 
         if csp and not reflected_xss:
@@ -912,7 +979,7 @@ def analyze_csp(csp):
 # Test function for HTTPS
 def check_https(url):
     try:
-        response = requests_retry_session().get(url, allow_redirects=True)
+        response = requests_retry_session().get(url, allow_redirects=True, timeout=10)
         final_url = response.url
 
         if final_url.startswith('https://'):
@@ -945,7 +1012,7 @@ def check_https(url):
 # Test function for security headers
 def check_security_headers(url):
     try:
-        response = requests_retry_session().get(url)
+        response = requests_retry_session().get(url, timeout=10)
         headers = response.headers
 
         # Define the headers to check
@@ -963,7 +1030,7 @@ def check_security_headers(url):
         # Initialize lists to keep track of implemented and missing headers
         implemented_headers = []
         missing_headers = []
-        details = ""
+        recommendations = {}
 
         # Check which headers are implemented and which are missing
         for header, value in security_headers.items():
@@ -984,37 +1051,37 @@ def check_security_headers(url):
             'Permissions-Policy': 'This controls what permissions can be granted to your site.'
         }
 
-        # Append missing headers recommendations to details
+        # Add recommendations for each missing header
         for header in missing_headers:
-            recommendation = missing_headers_recommendations.get(header, 'No recommendation available.')
-            details += f"Missing: {header} - {recommendation}\n"
+            recommendations[header] = missing_headers_recommendations.get(header, 'No recommendation available.')
 
         # Determine status based on how many headers are implemented
         if len(implemented_headers) >= 6:
             status = 'Good'
-            details = f'Most recommended security headers are implemented.\n' + details
         elif len(implemented_headers) >= 3:
             status = 'Fair'
-            details = f'Some security headers are implemented, but there is room for improvement.\n' + details
         else:
             status = 'Poor'
-            details = f'Few or no recommended security headers are implemented.\n' + details
 
-        details += f"\nImplemented: {', '.join(implemented_headers)}"
-
-        # Return the result of the security header check
+        # Properly format the output for better readability
         return {
             'description': 'Checks for implementation of security headers.',
             'status': status,
-            'details': details
+            'details': {
+                'implemented_headers': ', '.join(implemented_headers),  # Join as string for front-end display
+                'missing_headers': ', '.join(missing_headers),  # Join missing headers as a string
+                'recommendations': ', '.join([f"{header}: {rec}" for header, rec in recommendations.items()])  # Properly format recommendations
+            }
         }
 
     except requests.RequestException:
         return {
             'description': 'Checks for implementation of security headers.',
             'status': 'Error',
-            'details': 'Failed to connect to the website.'
+            'details': {'error': 'Failed to connect to the website.'}
         }
+
+
 
 
 # Flask routes
@@ -1022,6 +1089,7 @@ def check_security_headers(url):
 def index():
     return render_template('index.html')
 
+# Modify the Flask route to use the crawler
 @app.route('/run_tests', methods=['POST'])
 def api_run_tests():
     data = request.json
@@ -1030,8 +1098,8 @@ def api_run_tests():
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
 
-    results = run_security_tests(url)
-    return jsonify(results)
+    crawler_results = crawl_website(url)
+    return jsonify(crawler_results)
 
 if __name__ == '__main__':
     app.run(debug=True)

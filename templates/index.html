@@ -208,88 +208,92 @@
             }
         }
         
-        function displayResults(results) {
-    const resultsDiv = document.getElementById('results');
-    let html = '<h2>Test Results</h2>';
+        function displayResults(crawlerResults) {
+            const resultsDiv = document.getElementById('results');
+            let html = '<h2>Crawler Test Results</h2>';
 
-    for (const [test, result] of Object.entries(results)) {
-        let statusClass = '';
+            crawlerResults.forEach(pageResult => {
+                html += `
+                    <div class="result-item">
+                        <h3>Page: ${pageResult.url}</h3>
+                        <p><strong>Crawl Depth:</strong> ${pageResult.depth}</p>
+                `;
 
-        // Determine the status class based on the result's status
-        if (result.status && typeof result.status === 'string') {
-            if (result.status.toLowerCase() === 'good') statusClass = 'status-good';
-            else if (result.status.toLowerCase() === 'fair') statusClass = 'status-fair';
-            else if (result.status.toLowerCase() === 'poor') statusClass = 'status-poor';
-            else statusClass = 'status-error';
-        } else {
-            statusClass = 'status-error';
+                for (const [test, result] of Object.entries(pageResult.results)) {
+                    let statusClass = '';
+
+                    // Determine the status class based on the result's status
+                    if (result.status && typeof result.status === 'string') {
+                        if (result.status.toLowerCase() === 'good') statusClass = 'status-good';
+                        else if (result.status.toLowerCase() === 'fair') statusClass = 'status-fair';
+                        else if (result.status.toLowerCase() === 'poor') statusClass = 'status-poor';
+                        else statusClass = 'status-error';
+                    } else {
+                        statusClass = 'status-error';
+                    }
+
+                    html += `
+                        <div class="result-subitem">
+                            <h4>${test.replace('_', ' ').toUpperCase()}</h4>
+                            <p>${result.description || 'No description available'}</p>
+                            <p class="status ${statusClass}">Status: ${result.status || 'Unknown'}</p>
+                    `;
+
+                    // If the result has details, display them as a list in key-value format
+                    if (result.details) {
+                        html += '<ul>';
+                        if (Array.isArray(result.details)) {
+                            // Iterate through array details (e.g., for access control paths)
+                            result.details.forEach(detail => {
+                                html += `<li><strong>Path:</strong> ${detail.path}, <strong>Status:</strong> ${detail.status}, <strong>Details:</strong> ${detail.details}</li>`;
+                            });
+                        } else if (typeof result.details === 'object') {
+                            // Handle objects like security headers or CSRF protections
+                            Object.keys(result.details).forEach(key => {
+                                html += `<li><strong>${capitalizeFirstLetter(key.replace(/_/g, ' '))}:</strong> ${result.details[key]}</li>`;
+                            });
+                        } else {
+                            // Handle simple string details
+                            html += `<li><strong>Details:</strong> ${result.details}</li>`;
+                        }
+                        html += '</ul>';
+                    }
+
+                    // Specific handling for SSL/TLS certificates (structured format)
+                    if (test === 'ssl_tls' && result.certificate) {
+                        const { issued_to, issued_by, valid_from, valid_until, cipher } = result.certificate;
+                        html += `
+                            <ul>
+                                <li><strong>Issued to:</strong> ${issued_to.map(formatCertificateEntry).join(', ')}</li>
+                                <li><strong>Issued by:</strong> ${issued_by.map(formatCertificateEntry).join(', ')}</li>
+                                <li><strong>Valid from:</strong> ${new Date(valid_from).toLocaleString()}</li>
+                                <li><strong>Valid until:</strong> ${new Date(valid_until).toLocaleString()}</li>
+                                <li><strong>Cipher Suite:</strong> ${cipher}</li>
+                            </ul>
+                        `;
+                    }
+
+                    html += '</div>'; // Close result-subitem
+                }
+
+                html += '</div>'; // Close result-item
+            });
+
+            resultsDiv.innerHTML = html;
         }
 
-        // Add result title and status
-        html += `
-            <div class="result-item">
-                <h3>${test.replace('_', ' ').toUpperCase()}</h3>
-                <p>${result.description || 'No description available'}</p>
-                <p class="status ${statusClass}">Status: ${result.status || 'Unknown'}</p>
-        `;
-
-        // If the result has details, display them as a list in key-value format
-        if (result.details) {
-            html += '<ul>';
-            if (Array.isArray(result.details)) {
-                // Iterate through array details (e.g., for access control paths)
-                result.details.forEach(detail => {
-                    html += `<li><strong>Path:</strong> ${detail.path}, <strong>Status:</strong> ${detail.status}, <strong>Details:</strong> ${detail.details}</li>`;
-                });
-            } else if (typeof result.details === 'object') {
-                // Handle objects like security headers or CSRF protections
-                Object.keys(result.details).forEach(key => {
-                    html += `<li><strong>${capitalizeFirstLetter(key.replace(/_/g, ' '))}:</strong> ${result.details[key]}</li>`;
-                });
-            } else {
-                // Handle simple string details
-                html += `<li><strong>Details:</strong> ${result.details}</li>`;
+        // Helper function to format certificate details for SSL/TLS
+        function formatCertificateEntry(entry) {
+            if (Array.isArray(entry)) {
+                return entry.map(e => e.join(': ')).join(', ');
             }
-            html += '</ul>';
+            return entry;
         }
 
-        // Specific handling for SSL/TLS certificates (structured format)
-        if (test === 'ssl_tls' && result.certificate) {
-            const { issued_to, issued_by, valid_from, valid_until, cipher } = result.certificate;
-            html += `
-                <ul>
-                    <li><strong>Issued to:</strong> ${issued_to.map(formatCertificateEntry).join(', ')}</li>
-                    <li><strong>Issued by:</strong> ${issued_by.map(formatCertificateEntry).join(', ')}</li>
-                    <li><strong>Valid from:</strong> ${new Date(valid_from).toLocaleString()}</li>
-                    <li><strong>Valid until:</strong> ${new Date(valid_until).toLocaleString()}</li>
-                    <li><strong>Cipher Suite:</strong> ${cipher}</li>
-                </ul>
-            `;
+        // Helper function to capitalize the first letter of any string
+        function capitalizeFirstLetter(string) {
+            return string.charAt(0).toUpperCase() + string.slice(1);
         }
-
-        // Handle CSRF protection token strength, if available (structured format)
-        if (result.protections && result.protections.token_strength) {
-            html += `<li><strong>CSRF Token Strength:</strong> ${result.protections.token_strength}</li>`;
-        }
-
-        html += '</div>';
-    }
-
-    resultsDiv.innerHTML = html;
-}
-
-// Helper function to format certificate details for SSL/TLS
-function formatCertificateEntry(entry) {
-    if (Array.isArray(entry)) {
-        return entry.map(e => e.join(': ')).join(', ');
-    }
-    return entry;
-}
-
-// Helper function to capitalize the first letter of any string
-function capitalizeFirstLetter(string) {
-    return string.charAt(0).toUpperCase() + string.slice(1);
-}
 const canvas = document.getElementById('matrix-bg');
         const ctx = canvas.getContext('2d');
 
