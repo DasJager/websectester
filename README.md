@@ -19,6 +19,8 @@ This tool is for educational and testing purposes only. Always obtain proper aut
 - Input validation check
 - Error handling check
 - Access control check
+- Waf check
+- Server version check
 - Authentication and session management check
 - Crawler Function to crawl at a depth of 3 can be changed by editing max_depth=3 if you have more pages to check
 
