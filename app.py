@@ -151,6 +151,8 @@ def run_security_tests(url):
         # SSL/TLS Configuration Check
         results['ssl_tls'] = check_ssl_tls(url)
 
+        results['waf_detection'] = check_waf(url)
+        results['server_version'] = check_server_version(url)
         # Existing automated checks
         results['xss_protection'] = check_xss_protection(url)
         results['https'] = check_https(url)
@@ -516,6 +518,89 @@ def pad_base64(b64_string):
     Pad Base64 strings with "=" to make them valid for decoding if necessary.
     """
     return b64_string + '=' * (4 - len(b64_string) % 4)
+
+def check_waf(url):
+    """
+    Detects common WAF by checking for specific headers, status codes, or content patterns.
+    """
+    try:
+        response = requests_retry_session().get(url, timeout=10)
+        
+        # Common WAF headers to check for
+        waf_headers = {
+            'X-WAF-Detected': 'Generic WAF',
+            'X-Sucuri-ID': 'Sucuri WAF',
+            'X-Firewall': 'Firewall',
+            'X-CDN-Protection': 'CDN Protection',
+            'Server': 'Cloudflare',  # Cloudflare also provides WAF
+            'X-Request-ID': 'Akamai WAF'
+        }
+        
+        detected_waf = {}
+        
+        # Check headers for WAF signatures
+        for header, waf_name in waf_headers.items():
+            if header in response.headers:
+                detected_waf[header] = waf_name
+        
+        # Check for specific status codes (403, 406, 429)
+        if response.status_code in [403, 406, 429]:
+            detected_waf['status_code'] = f"Potential WAF block: {response.status_code}"
+        
+        # Check response content for known WAF signatures
+        blocked_keywords = ['Access Denied', 'This request has been blocked', 'Security Error', 'Forbidden', 'Your IP has been blocked']
+        if any(keyword in response.text for keyword in blocked_keywords):
+            detected_waf['body_check'] = 'WAF Block: Response contains blocking keywords.'
+
+        # Return WAF details if detected
+        if detected_waf:
+            return {
+                'description': 'WAF Detection',
+                'status': 'Detected',
+                'details': detected_waf
+            }
+        else:
+            return {
+                'description': 'WAF Detection',
+                'status': 'Not Detected',
+                'details': 'No WAF detected through headers, status code, or response content.'
+            }
+    except requests.RequestException as e:
+        return {
+            'description': 'WAF Detection',
+            'status': 'Error',
+            'details': f'Error occurred while detecting WAF: {str(e)}'
+        }
+
+
+# Function to check the server version
+def check_server_version(url):
+    try:
+        # Send a HEAD request to get the headers without fetching the body
+        response = requests_retry_session().head(url, timeout=10)
+        
+        # Extract the 'Server' header
+        server_version = response.headers.get('Server')
+        
+        if server_version:
+            return {
+                'description': 'Checks the web server version.',
+                'status': 'Detected',
+                'details': f'Server version: {server_version}'
+            }
+        else:
+            return {
+                'description': 'Checks the web server version.',
+                'status': 'Not Found',
+                'details': 'Server version header is not exposed.'
+            }
+    except requests.RequestException as e:
+        return {
+            'description': 'Checks the web server version.',
+            'status': 'Error',
+            'details': f'Error occurred while checking server version: {str(e)}'
+        }
+
 
 
 # Test function for input validation
